@@ -1,0 +1,12 @@
+# Dev / build deps: training pipeline (01–06) and regenerating the static assets
+# (export_model_js.py, build_circuits_geo.py, build_app_data.py).
+# NOT needed to run the deployed app — the model runs in the browser.
+pandas>=2.0
+numpy>=1.24
+scikit-learn>=1.3
+xgboost>=2.0
+imbalanced-learn>=0.11
+shap>=0.44
+matplotlib>=3.7
+seaborn>=0.12
+joblib>=1.3

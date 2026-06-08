@@ -70,7 +70,6 @@
 </head>
 <body>
 <div class="wrap">
-  <a class="back" href="/">← Back to predictor</a>
   <h1>What drives the <span>pit-stop</span> model</h1>
   <p class="lede">Every input the model uses, how much each one actually moves the
     prediction, which direction it pushes, how the engineered features are built
@@ -107,6 +106,7 @@
   <div id="dict"></div>
 </div>
 
+<!--DATA_INJECT-->
 <script>
 const GROUP_COLOR = {
   "Race state":"#ffb02e", "Position":"#b388ff", "Tyres":"#00d2be", "Pace":"#ff6b9d",
@@ -249,8 +249,8 @@ function renderDict(){
   }).join('');
 }
 
-async function init(){
-  const d = await (await fetch('/api/features')).json();
+function init(){
+  const d = window.APPDATA;
   DATA = d.features;
   document.getElementById('base-prob').textContent = (d.base_prob*100).toFixed(1)+'%';
   document.getElementById('thr').textContent = (d.threshold*100).toFixed(1)+'%';
