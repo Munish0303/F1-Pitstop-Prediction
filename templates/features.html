@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>F1 Pit Model — Feature Insights</title>
+<style>
+  :root {
+    --bg:#0a0e14; --panel:#141a24; --panel2:#1c2533; --line:#2a3547;
+    --txt:#e6edf3; --muted:#8b97a7; --accent:#00d2be; --red:#ff2d55; --green:#2ecc71;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+    font-family:'Segoe UI',system-ui,sans-serif; line-height:1.5; }
+  .wrap { max-width:1100px; margin:0 auto; padding:28px 24px 80px; }
+  a.back { color:var(--accent); text-decoration:none; font-weight:600; font-size:14px; }
+  a.back:hover { text-decoration:underline; }
+  h1 { font-size:26px; margin:14px 0 4px; letter-spacing:1px; }
+  h1 span { color:var(--accent); }
+  .lede { color:var(--muted); font-size:14px; max-width:760px; }
+  .basebox { display:inline-flex; gap:22px; margin-top:16px; background:var(--panel);
+    border:1px solid var(--line); border-radius:12px; padding:12px 18px; }
+  .basebox div .k { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+  .basebox div .v { font-size:20px; font-weight:700; }
+  h2 { font-size:14px; letter-spacing:1.5px; text-transform:uppercase; color:var(--accent);
+    margin:40px 0 6px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+  .sub { color:var(--muted); font-size:13px; margin:0 0 16px; }
+
+  /* sort buttons */
+  .seg { display:inline-flex; gap:6px; margin:6px 0 14px; }
+  .seg button { background:var(--panel2); color:var(--muted); border:1px solid var(--line);
+    border-radius:7px; padding:7px 14px; font-size:12px; cursor:pointer; }
+  .seg button.active { background:var(--accent); color:#04201d; border-color:var(--accent); font-weight:700; }
+
+  /* impact bars */
+  .bars { display:flex; flex-direction:column; gap:7px; }
+  .barrow { display:grid; grid-template-columns:210px 1fr 64px; align-items:center; gap:12px; }
+  .barrow .name { font-size:13px; display:flex; align-items:center; gap:7px; justify-content:flex-end; text-align:right; }
+  .dot { width:9px; height:9px; border-radius:50%; flex:none; }
+  .track { position:relative; height:20px; background:var(--panel2); border-radius:5px; overflow:hidden; }
+  .track > i { position:absolute; top:0; bottom:0; left:0; border-radius:5px; display:block; }
+  .barrow .pct { font-size:12px; color:var(--muted); text-align:right; font-variant-numeric:tabular-nums; }
+  .arrow { font-weight:800; }
+  .up { color:var(--red); } .down { color:var(--green); }
+  .legend { display:flex; flex-wrap:wrap; gap:14px; margin:6px 0 18px; font-size:12px; color:var(--muted); }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+
+  /* dependency graph */
+  #graph-wrap { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:8px; overflow-x:auto; }
+  svg text { fill:var(--txt); font-size:11px; }
+  .node rect { rx:6; }
+  .edge { stroke:var(--line); fill:none; stroke-width:1.4; transition:stroke .15s,opacity .15s; }
+  .node.dim { opacity:.22; } .edge.dim { opacity:.06; }
+  .edge.hot { stroke:var(--accent); stroke-width:2.2; }
+
+  /* dictionary */
+  .group { margin-top:26px; }
+  .group h3 { font-size:13px; margin:0 0 10px; display:flex; align-items:center; gap:8px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(330px,1fr)); gap:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:13px 15px; border-left:3px solid var(--accent); }
+  .card .top { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+  .card .lbl { font-weight:700; font-size:14px; }
+  .card .imp { font-size:11px; color:var(--muted); white-space:nowrap; }
+  .card .desc { font-size:13px; color:var(--txt); margin:7px 0 0; }
+  .card .from { margin-top:9px; font-size:11px; color:var(--muted); }
+  .chip { display:inline-block; background:var(--panel2); border:1px solid var(--line);
+    border-radius:20px; padding:2px 9px; font-size:11px; margin:2px 3px 0 0; color:var(--txt); }
+  .eff { font-size:11px; margin-top:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">← Back to predictor</a>
+  <h1>What drives the <span>pit-stop</span> model</h1>
+  <p class="lede">Every input the model uses, how much each one actually moves the
+    prediction, which direction it pushes, how the engineered features are built
+    from the raw ones, and what each means.</p>
+
+  <div class="basebox">
+    <div><div class="k">Baseline pit prob</div><div class="v" id="base-prob">—</div></div>
+    <div><div class="k">Decision threshold</div><div class="v" id="thr">—</div></div>
+    <div><div class="k">Total features</div><div class="v" id="nfeat">—</div></div>
+  </div>
+
+  <h2>How much each feature moves the prediction</h2>
+  <p class="sub">Bar = change in pit probability when the feature goes from its
+    typical-low (10th percentile) to typical-high (90th percentile) value, holding
+    everything else at the median. <span class="up">▲</span> raises the pit chance,
+    <span class="down">▼</span> lowers it. Sort:</p>
+  <div class="seg" id="sort">
+    <button data-v="effect" class="active">By impact</button>
+    <button data-v="importance">By model importance</button>
+    <button data-v="group">By group</button>
+  </div>
+  <div class="legend" id="legend"></div>
+  <div class="bars" id="bars"></div>
+
+  <h2>How the features are linked</h2>
+  <p class="sub">The model's strongest signals are <b>engineered</b> from the raw
+    inputs. Arrows show what each engineered feature is built from. Hover any node
+    to trace its connections. (Raw inputs with no engineered children — weather,
+    car tier, etc. — feed the model directly and aren't shown here.)</p>
+  <div id="graph-wrap"><svg id="graph"></svg></div>
+
+  <h2>Every feature explained</h2>
+  <p class="sub">Grouped by category. Engineered features list what they're built from.</p>
+  <div id="dict"></div>
+</div>
+
+<script>
+const GROUP_COLOR = {
+  "Race state":"#ffb02e", "Position":"#b388ff", "Tyres":"#00d2be", "Pace":"#ff6b9d",
+  "Car":"#5ad1ff", "Weather":"#7ee787", "Circuit":"#f2c94c", "Engineered":"#ff7b54",
+  "Other":"#8b97a7",
+};
+const PARENT_LABEL = { race_laps:"race laps" };
+let DATA = [];
+
+function labelOf(name){
+  const f = DATA.find(d=>d.name===name);
+  return f ? f.label : (PARENT_LABEL[name] || name);
+}
+
+// ── impact bars ──────────────────────────────────────────────────────────────
+function renderLegend(){
+  const groups=[...new Set(DATA.map(d=>d.group))];
+  document.getElementById('legend').innerHTML = groups.map(g=>
+    `<span><i class="dot" style="background:${GROUP_COLOR[g]||'#888'}"></i>${g}</span>`).join('');
+}
+
+function renderBars(sortBy){
+  let rows=[...DATA];
+  if(sortBy==='effect')      rows.sort((a,b)=>b.effect_abs-a.effect_abs);
+  else if(sortBy==='importance') rows.sort((a,b)=>b.importance-a.importance);
+  else rows.sort((a,b)=> a.group.localeCompare(b.group) || b.effect_abs-a.effect_abs);
+
+  const maxEff = Math.max(...rows.map(r=>r.effect_abs), 0.01);
+  document.getElementById('bars').innerHTML = rows.map(r=>{
+    const w = Math.max(1, 100*r.effect_abs/maxEff);
+    const up = r.effect>=0;
+    const col = GROUP_COLOR[r.group]||'#888';
+    const arrow = r.effect_abs<0.001 ? '' : (up?'<span class="arrow up">▲</span>':'<span class="arrow down">▼</span>');
+    return `<div class="barrow">
+      <div class="name"><span>${r.label}</span><i class="dot" style="background:${col}"></i></div>
+      <div class="track"><i style="width:${w}%;background:${col}"></i></div>
+      <div class="pct">${arrow} ${(r.effect_abs*100).toFixed(1)}%</div>
+    </div>`;
+  }).join('');
+}
+
+// ── dependency graph (layered DAG) ───────────────────────────────────────────
+function buildGraph(){
+  const parentsMap={};               // name -> [parents]
+  DATA.forEach(d=> parentsMap[d.name]=d.derived_from||[]);
+  // nodes = anything that has parents (engineered) or is someone's parent
+  const involved=new Set();
+  DATA.forEach(d=>{ if((d.derived_from||[]).length){ involved.add(d.name); d.derived_from.forEach(p=>involved.add(p)); }});
+  const nodes=[...involved];
+
+  const depthCache={};
+  function depth(n){
+    if(n in depthCache) return depthCache[n];
+    const ps=parentsMap[n]||[];
+    const d = ps.length? 1+Math.max(...ps.map(depth)) : 0;
+    return depthCache[n]=d;
+  }
+  const maxDepth=Math.max(...nodes.map(depth));
+  const layers={};
+  nodes.forEach(n=>{ (layers[depth(n)] ||= []).push(n); });
+
+  const colW=300, rowH=34, padX=20, padY=24;
+  const height = Math.max(...Object.values(layers).map(a=>a.length))*rowH + padY*2;
+  const width = padX*2 + colW*maxDepth + 150;
+  const pos={};
+  for(let d=0; d<=maxDepth; d++){
+    const arr=(layers[d]||[]).slice().sort((a,b)=>labelOf(a).localeCompare(labelOf(b)));
+    const colH=arr.length*rowH;
+    const startY=padY+(height-padY*2-colH)/2;
+    arr.forEach((n,i)=>{ pos[n]={x:padX+d*colW, y:startY+i*rowH+rowH/2, d}; });
+  }
+
+  const svg=document.getElementById('graph');
+  svg.setAttribute('viewBox',`0 0 ${width} ${height}`);
+  svg.setAttribute('width',width); svg.setAttribute('height',height);
+
+  let edges='', rects='';
+  nodes.forEach(n=>{
+    (parentsMap[n]||[]).forEach(p=>{
+      if(!pos[p]) return;
+      const x1=pos[p].x+128, y1=pos[p].y, x2=pos[n].x, y2=pos[n].y;
+      const mx=(x1+x2)/2;
+      edges+=`<path class="edge" data-a="${p}" data-b="${n}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`;
+    });
+  });
+  nodes.forEach(n=>{
+    const isEng = (parentsMap[n]||[]).length>0;
+    const f = DATA.find(d=>d.name===n);
+    const col = f? (GROUP_COLOR[f.group]||'#888') : '#5a6b82';
+    rects+=`<g class="node" data-n="${n}" transform="translate(${pos[n].x},${pos[n].y-12})" style="cursor:pointer">
+      <rect width="128" height="24" fill="var(--panel2)" stroke="${col}" stroke-width="${isEng?1.6:1}"></rect>
+      <rect width="4" height="24" fill="${col}"></rect>
+      <text x="11" y="16">${labelOf(n).slice(0,20)}</text></g>`;
+  });
+  svg.innerHTML = edges + rects;
+
+  // hover highlight
+  svg.querySelectorAll('.node').forEach(g=>{
+    g.addEventListener('mouseenter',()=>{
+      const n=g.dataset.n;
+      const connected=new Set([n]);
+      svg.querySelectorAll('.edge').forEach(e=>{
+        const hot = e.dataset.a===n||e.dataset.b===n;
+        e.classList.toggle('hot',hot); e.classList.toggle('dim',!hot);
+        if(hot){ connected.add(e.dataset.a); connected.add(e.dataset.b); }
+      });
+      svg.querySelectorAll('.node').forEach(x=> x.classList.toggle('dim',!connected.has(x.dataset.n)));
+    });
+    g.addEventListener('mouseleave',()=>{
+      svg.querySelectorAll('.edge').forEach(e=>e.classList.remove('hot','dim'));
+      svg.querySelectorAll('.node').forEach(x=>x.classList.remove('dim'));
+    });
+  });
+}
+
+// ── dictionary ───────────────────────────────────────────────────────────────
+function renderDict(){
+  const order=["Pace","Tyres","Race state","Position","Circuit","Car","Weather","Engineered"];
+  const byGroup={};
+  DATA.forEach(d=>{ (byGroup[d.group] ||= []).push(d); });
+  const host=document.getElementById('dict');
+  host.innerHTML = order.filter(g=>byGroup[g]).map(g=>{
+    const col=GROUP_COLOR[g]||'#888';
+    const cards=byGroup[g].sort((a,b)=>b.effect_abs-a.effect_abs).map(d=>{
+      const up=d.effect>=0;
+      const eff = d.effect_abs<0.001 ? '<span style="color:var(--muted)">minimal effect at baseline</span>'
+        : `<span class="${up?'up':'down'}">${up?'▲ raises':'▼ lowers'} pit chance by ${(d.effect_abs*100).toFixed(1)}%</span>`;
+      const from = (d.derived_from&&d.derived_from.length)
+        ? `<div class="from">built from: ${d.derived_from.map(p=>`<span class="chip">${labelOf(p)}</span>`).join('')}</div>` : '';
+      return `<div class="card" style="border-left-color:${col}">
+        <div class="top"><span class="lbl">${d.label}</span>
+          <span class="imp">${d.importance_pct.toFixed(1)}% importance</span></div>
+        <div class="desc">${d.description}</div>
+        <div class="eff">${eff}</div>${from}
+        <div class="from" style="opacity:.6">${d.name}</div>
+      </div>`;
+    }).join('');
+    return `<div class="group"><h3><i class="dot" style="background:${col}"></i>${g}</h3>
+      <div class="cards">${cards}</div></div>`;
+  }).join('');
+}
+
+async function init(){
+  const d = await (await fetch('/api/features')).json();
+  DATA = d.features;
+  document.getElementById('base-prob').textContent = (d.base_prob*100).toFixed(1)+'%';
+  document.getElementById('thr').textContent = (d.threshold*100).toFixed(1)+'%';
+  document.getElementById('nfeat').textContent = DATA.length;
+  renderLegend();
+  renderBars('effect');
+  buildGraph();
+  renderDict();
+  document.getElementById('sort').addEventListener('click', e=>{
+    const b=e.target.closest('button'); if(!b) return;
+    document.querySelectorAll('#sort button').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active'); renderBars(b.dataset.v);
+  });
+}
+init();
+</script>
+</body>
+</html>
