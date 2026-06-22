@@ -1,0 +1,24 @@
+# Only ./public is served (see vercel.json). Keep the deploy upload small and
+# avoid shipping the training pipeline / data / model artifacts to Vercel.
+data/
+models/
+outputs/
+{data,models,outputs}/
+*.pkl
+*.csv
+
+01_preprocess.py
+02_feature_engineering.py
+03_train.py
+04_evaluate.py
+05_explain.py
+06_predict.py
+run_pipeline.py
+export_model_js.py
+build_app_data.py
+build_circuits_geo.py
+verify_sliders.py
+requirements-dev.txt
+
+# Streamlit entrypoint (kept in the repo, not needed by the Vercel static build)
+app.py

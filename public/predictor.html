@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>F1 Pit-Stop Predictor</title>
+<style>
+  :root {
+    --bg: #0a0e14;
+    --panel: #141a24;
+    --panel2: #1c2533;
+    --line: #2a3547;
+    --txt: #e6edf3;
+    --muted: #8b97a7;
+    --accent: #00d2be;   /* mercedes-ish teal */
+    --red: #ff2d55;
+    --green: #2ecc71;
+    --amber: #ffb02e;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--txt);
+    font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
+  #app { display: flex; height: 100vh; }
+
+  /* ── 3D scene ── */
+  #scene { flex: 1; position: relative; }
+  #canvas { width: 100%; height: 100%; display: block; }
+  #scene-overlay { position: absolute; top: 18px; left: 22px; pointer-events: none; }
+  #scene-overlay h1 { margin: 0; font-size: 20px; letter-spacing: 2px; font-weight: 700; }
+  #scene-overlay h1 span { color: var(--accent); }
+  #scene-overlay .sub { color: var(--muted); font-size: 12px; margin-top: 4px; letter-spacing: 1px; }
+  #track-name { position: absolute; bottom: 22px; left: 22px; pointer-events: none; }
+  #track-name .gp { font-size: 22px; font-weight: 700; }
+  #track-name .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+  /* ── Result HUD ── */
+  #result { position: absolute; top: 18px; right: 22px; width: 230px;
+    background: rgba(20,26,36,0.86); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px 18px; backdrop-filter: blur(6px); }
+  #result .label { font-size: 11px; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; }
+  #decision { font-size: 26px; font-weight: 800; margin: 6px 0 10px; }
+  #decision.pit { color: var(--red); }
+  #decision.stay { color: var(--green); }
+  .bar { height: 10px; background: var(--panel2); border-radius: 6px; overflow: hidden; margin-top: 6px; }
+  .bar > i { display: block; height: 100%; width: 0%; transition: width .35s ease;
+    background: linear-gradient(90deg, var(--green), var(--amber), var(--red)); }
+  #prob-val { font-size: 28px; font-weight: 700; margin-top: 4px; }
+  #thr-note { font-size: 11px; color: var(--muted); margin-top: 8px; }
+
+  /* ── Control panel ── */
+  #panel { width: 360px; background: var(--panel); border-left: 1px solid var(--line);
+    overflow-y: auto; padding: 18px 18px 60px; }
+  #panel h2 { font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--accent); margin: 22px 0 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  #panel h2:first-child { margin-top: 4px; }
+  select { width: 100%; background: var(--panel2); color: var(--txt); border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px; font-size: 14px; }
+  .ctl { margin: 12px 0; }
+  .ctl .row { display: flex; justify-content: space-between; align-items: baseline; }
+  .ctl label { font-size: 13px; color: var(--txt); }
+  .ctl .val { font-size: 13px; color: var(--accent); font-variant-numeric: tabular-nums; font-weight: 600; }
+  input[type=range] { width: 100%; margin-top: 6px; accent-color: var(--accent); }
+  .seg { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .seg button { flex: 1; min-width: 52px; background: var(--panel2); color: var(--muted);
+    border: 1px solid var(--line); border-radius: 7px; padding: 7px 4px; font-size: 12px; cursor: pointer; }
+  .seg button.active { background: var(--accent); color: #04201d; border-color: var(--accent); font-weight: 700; }
+  .toggle { display: flex; gap: 6px; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .circuit-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+  .circuit-stats div { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; }
+  .circuit-stats .k { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .circuit-stats .v { font-size: 15px; font-weight: 700; margin-top: 2px; }
+  .footer-note { font-size: 11px; color: var(--muted); margin-top: 24px; line-height: 1.5; }
+  .nav-link { display: block; text-decoration: none; color: var(--accent);
+    background: var(--panel2); border: 1px solid var(--accent); border-radius: 8px;
+    padding: 10px 12px; font-size: 13px; font-weight: 600; margin-bottom: 16px; text-align: center; }
+  .nav-link:hover { background: var(--accent); color: #04201d; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="scene">
+    <canvas id="canvas"></canvas>
+    <div id="scene-overlay">
+      <h1>F1 <span>PIT-STOP</span> PREDICTOR</h1>
+      <div class="sub">XGBoost · "will the driver pit on the NEXT lap?"</div>
+    </div>
+    <div id="track-name">
+      <div class="gp" id="gp-name">—</div>
+      <div class="meta" id="gp-meta"></div>
+    </div>
+    <div id="result">
+      <div class="label">Prediction</div>
+      <div id="decision" class="stay">—</div>
+      <div class="label">Pit probability</div>
+      <div id="prob-val">0%</div>
+      <div class="bar"><i id="prob-bar"></i></div>
+      <div id="thr-note"></div>
+    </div>
+  </div>
+
+  <div id="panel">
+    <h2>Circuit</h2>
+    <select id="circuit"></select>
+    <div class="circuit-stats">
+      <div><div class="k">Overtaking</div><div class="v" id="cs-ot">—</div></div>
+      <div><div class="k">Deg tier</div><div class="v" id="cs-deg">—</div></div>
+      <div><div class="k">Avg tyre life</div><div class="v" id="cs-tyre">—</div></div>
+      <div><div class="k">Pit rate</div><div class="v" id="cs-pit">—</div></div>
+    </div>
+
+    <div class="ctl" style="margin-top:16px;">
+      <div class="row"><label>Pace &amp; degradation model</label></div>
+      <div class="seg toggle" id="seg-autolink">
+        <button data-v="1" class="active">AUTO</button>
+        <button data-v="0">MANUAL</button>
+      </div>
+      <div class="hint">AUTO: lap-time loss &amp; tyre degradation rise as the tyre
+        ages past its cliff — these are the strongest signals the model uses, so
+        the prediction reacts to tyre age. MANUAL unlocks them to set by hand.</div>
+    </div>
+
+    <h2>Race state</h2>
+    <div class="ctl" data-slider="LapNumber" data-min="1" data-max="70" data-step="1" data-val="20">
+      <div class="row"><label>Lap number</label><span class="val"></span></div>
+      <input type="range" />
+      <div class="hint" id="lap-hint">RaceProgress derived from lap ÷ race distance.</div>
+    </div>
+    <div class="ctl" data-slider="Stint" data-min="1" data-max="5" data-step="1" data-val="1">
+      <div class="row"><label>Stint #</label><span class="val"></span></div>
+      <input type="range" />
+    </div>
+    <div class="ctl" data-slider="Position" data-min="1" data-max="20" data-step="1" data-val="6">
+      <div class="row"><label>Track position</label><span class="val"></span></div>
+      <input type="range" />
+    </div>
+    <div class="ctl" data-slider="position_vs_start" data-min="-15" data-max="15" data-step="1" data-val="0">
+      <div class="row"><label>Positions vs start</label><span class="val"></span></div>
+      <input type="range" />
+      <div class="hint">+ gained / − lost places. Range is bounded by your track
+        position (a leader can't have lost places).</div>
+    </div>
+
+    <h2>Tyres</h2>
+    <div class="ctl">
+      <div class="row"><label>Compound</label></div>
+      <div class="seg" id="seg-compound">
+        <button data-v="0">SOFT</button>
+        <button data-v="1">MED</button>
+        <button data-v="2">HARD</button>
+        <button data-v="3">INT</button>
+        <button data-v="4">WET</button>
+      </div>
+    </div>
+    <div class="ctl" data-slider="TyreLife" data-min="1" data-max="45" data-step="1" data-val="18">
+      <div class="row"><label>Tyre age (laps)</label><span class="val"></span></div>
+      <input type="range" />
+    </div>
+    <div class="ctl" data-slider="cumulative_degradation_clean" data-min="0" data-max="6" data-step="0.1" data-val="1.5">
+      <div class="row"><label>Cumulative deg (s)</label><span class="val"></span></div>
+      <input type="range" />
+    </div>
+    <div class="ctl" data-slider="deg_trend" data-min="-1" data-max="2" data-step="0.05" data-val="0.2">
+      <div class="row"><label>Deg trend</label><span class="val"></span></div>
+      <input type="range" />
+    </div>
+
+    <h2>Pace</h2>
+    <div class="ctl" data-slider="LapTime_Delta_Clean" data-min="-3" data-max="5" data-step="0.1" data-val="0.5">
+      <div class="row"><label>Laptime delta (s)</label><span class="val"></span></div>
+      <input type="range" />
+    </div>
+    <div class="ctl" data-slider="laptime_pct_above_median" data-min="-2" data-max="12" data-step="0.1" data-val="2">
+      <div class="row"><label>% above median pace</label><span class="val"></span></div>
+      <input type="range" />
+    </div>
+    <div class="ctl" data-slider="laptime_trend" data-min="-2" data-max="3" data-step="0.05" data-val="0.3">
+      <div class="row"><label>Laptime trend</label><span class="val"></span></div>
+      <input type="range" />
+    </div>
+
+    <h2>Car</h2>
+    <div class="ctl">
+      <div class="row"><label>Car tier</label></div>
+      <div class="seg" id="seg-tier">
+        <button data-v="3">TOP</button>
+        <button data-v="2">MID</button>
+        <button data-v="1">BACK</button>
+      </div>
+    </div>
+
+    <h2>Weather &amp; track</h2>
+    <div class="ctl" data-slider="track_temp_mean" data-min="10" data-max="55" data-step="0.5" data-val="35">
+      <div class="row"><label>Track temp (°C)</label><span class="val"></span></div>
+      <input type="range" />
+    </div>
+    <div class="ctl" data-slider="humidity_mean" data-min="10" data-max="100" data-step="1" data-val="50">
+      <div class="row"><label>Humidity (%)</label><span class="val"></span></div>
+      <input type="range" />
+    </div>
+    <div class="ctl" data-slider="wind_speed_mean" data-min="0" data-max="12" data-step="0.2" data-val="2">
+      <div class="row"><label>Wind speed (m/s)</label><span class="val"></span></div>
+      <input type="range" />
+    </div>
+    <div class="ctl">
+      <div class="row"><label>Conditions</label></div>
+      <div class="seg toggle" id="seg-rain">
+        <button data-v="0" class="active">DRY</button>
+        <button data-v="1">WET LAP</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <div class="row"><label>Safety car / VSC</label></div>
+      <div class="seg toggle" id="seg-sc">
+        <button data-v="0" class="active">GREEN</button>
+        <button data-v="1">NEUTRALISED</button>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      Every slider feeds the real trained model. Engineered features (tyre-life
+      ratio, pit window, deg-per-lap, etc.) are recomputed server-side exactly as
+      in training. Decision flips to <b style="color:var(--red)">PIT</b> when the
+      probability crosses the model's tuned threshold.
+    </div>
+  </div>
+</div>
+
+<script src="assets/model.js"></script>
+<script src="assets/circuits_geo.js"></script>
+<script src="assets/app_data.js"></script>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  State
+// ─────────────────────────────────────────────────────────────────────────────
+const COMPOUND_COLOR = { 0:0xff2d55, 1:0xffd02e, 2:0xf2f2f2, 3:0x2ecc71, 4:0x3aa0ff };
+const MODEL = window.MODEL;          // exported XGBoost model (injected)
+let CIRCUITS = {}, THRESHOLD = 0.4, GEO = {};
+let raceLaps = 58;   // current circuit's race distance (laps)
+
+const state = {
+  circuit: null,
+  LapNumber: 20, Stint: 1, Position: 6, position_vs_start: 0,
+  Compound_enc: 1, TyreLife: 18, cumulative_degradation_clean: 1.5, deg_trend: 0.2,
+  LapTime_Delta_Clean: 0.5, laptime_pct_above_median: 2, laptime_trend: 0.3,
+  car_tier_enc: 2,
+  track_temp_mean: 35, humidity_mean: 50, wind_speed_mean: 2,
+  rainfall_any: 0, is_wet_lap: 0, neutralised_lap: 0, neutralised_prev: 0,
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Three.js scene
+// ─────────────────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0e14);
+scene.fog = new THREE.Fog(0x0a0e14, 120, 260);
+
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 800);
+camera.position.set(0, 88, 44);
+camera.lookAt(0, 0, 0);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const key = new THREE.DirectionalLight(0xffffff, 1.1);
+key.position.set(30, 60, 20); scene.add(key);
+const rim = new THREE.DirectionalLight(0x00d2be, 0.4);
+rim.position.set(-30, 20, -30); scene.add(rim);
+
+// ground grid
+const grid = new THREE.GridHelper(220, 44, 0x1c2533, 0x141a24);
+grid.position.y = -0.4; scene.add(grid);
+
+// track group (rebuilt per circuit)
+let trackGroup = new THREE.Group();
+scene.add(trackGroup);
+let trackCurve = null;
+let trackBounds = { x: 35, z: 35 };
+
+function fitCamera() {
+  const w = canvas.clientWidth || 1, h = canvas.clientHeight || 1;
+  const aspect = w / h;
+  const vfov = camera.fov * Math.PI / 180;
+  const t = Math.tan(vfov / 2);
+  const margin = 1.45;
+  const needZ = trackBounds.z * margin;
+  const needX = trackBounds.x * margin;
+  const dist = Math.max(needZ / t, needX / (t * aspect));
+  camera.position.set(0, dist * 0.94, dist * 0.34);
+  camera.lookAt(0, 0, 0);
+}
+
+// car marker
+const carGeo = new THREE.ConeGeometry(1.4, 4, 4);
+const carMat = new THREE.MeshStandardMaterial({ color: 0xffd02e, emissive: 0x553a00, emissiveIntensity: 0.4 });
+const car = new THREE.Mesh(carGeo, carMat);
+car.rotation.x = Math.PI / 2;
+scene.add(car);
+
+// pit glow ring (pulses red when model says PIT)
+const ringGeo = new THREE.RingGeometry(2.4, 3.2, 32);
+const ringMat = new THREE.MeshBasicMaterial({ color: 0xff2d55, transparent: true, opacity: 0, side: THREE.DoubleSide });
+const ring = new THREE.Mesh(ringGeo, ringMat);
+ring.rotation.x = -Math.PI / 2;
+scene.add(ring);
+
+// Build a curve from the real circuit outline (array of [x, z] points).
+function curveFromGeo(pts) {
+  // Drop a duplicated closing point if present so the closed curve is smooth.
+  let arr = pts.slice();
+  if (arr.length > 2) {
+    const a = arr[0], b = arr[arr.length - 1];
+    if (Math.hypot(a[0]-b[0], a[1]-b[1]) < 0.5) arr = arr.slice(0, -1);
+  }
+  const v = arr.map(p => new THREE.Vector3(p[0], 0, p[1]));
+  return new THREE.CatmullRomCurve3(v, true, 'catmullrom', 0.3);
+}
+
+function buildTrack(name) {
+  scene.remove(trackGroup);
+  trackGroup = new THREE.Group();
+  const geo = GEO[name];
+  if (!geo || geo.length < 4) { trackCurve = null; return; }
+  trackCurve = curveFromGeo(geo);
+  trackBounds = {
+    x: Math.max(...geo.map(p => Math.abs(p[0]))),
+    z: Math.max(...geo.map(p => Math.abs(p[1]))),
+  };
+  fitCamera();
+
+  const segs = Math.max(300, geo.length * 3);
+  const tube = new THREE.TubeGeometry(trackCurve, segs, 1.5, 14, true);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x2a3547, roughness: 0.85, metalness: 0.1 });
+  trackGroup.add(new THREE.Mesh(tube, mat));
+
+  // kerb edges
+  const edge = new THREE.TubeGeometry(trackCurve, segs, 1.85, 4, true);
+  trackGroup.add(new THREE.Mesh(edge, new THREE.MeshBasicMaterial({ color: 0x3a475c, wireframe: true })));
+
+  // racing-line stripe
+  const line = new THREE.TubeGeometry(trackCurve, segs, 0.25, 8, true);
+  trackGroup.add(new THREE.Mesh(line, new THREE.MeshBasicMaterial({ color: 0x00d2be })));
+
+  // start/finish marker
+  const sf = trackCurve.getPointAt(0);
+  const post = new THREE.Mesh(
+    new THREE.BoxGeometry(0.6, 6, 0.6),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  post.position.set(sf.x, 3, sf.z);
+  trackGroup.add(post);
+
+  scene.add(trackGroup);
+}
+
+function resize() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== w || canvas.height !== h) {
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+  fitCamera();
+}
+
+let lastPit = false;
+function animate(t) {
+  resize();
+  // drive the car along the lap, position scaled to race progress
+  if (trackCurve) {
+    const u = (state.LapNumber / raceLaps) % 1;
+    const p = trackCurve.getPointAt(u);
+    const tan = trackCurve.getTangentAt(u);
+    car.position.set(p.x, 0.4, p.z);
+    car.lookAt(p.x + tan.x, 0.4, p.z + tan.z);
+    car.rotation.x = Math.PI / 2;
+    ring.position.set(p.x, 0.1, p.z);
+  }
+  // pulse ring when model says PIT
+  ringMat.opacity = lastPit ? 0.35 + 0.35 * Math.sin(t * 0.006) : 0;
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  In-browser inference — runs the exported XGBoost model + feature engineering.
+//  No backend; mirrors app.py's engineer() + 02_feature_engineering.py exactly.
+// ─────────────────────────────────────────────────────────────────────────────
+const EXPECTED_STINT_LIFE = { 0:15, 1:19, 2:26, 3:14, 4:7 };
+
+function buildFeatureVector(state, circuit) {
+  const lap = state.LapNumber;
+  const rp = Math.min(1, lap / (circuit.race_laps || 58));
+  const f = {
+    LapNumber: lap, RaceProgress: rp, Stint: state.Stint, TyreLife: state.TyreLife,
+    LapTime_Delta_Clean: state.LapTime_Delta_Clean,
+    laptime_pct_above_median: state.laptime_pct_above_median,
+    cumulative_degradation_clean: state.cumulative_degradation_clean,
+    Position: state.Position, position_vs_start: state.position_vs_start,
+    is_wet_lap: state.is_wet_lap, neutralised_lap: state.neutralised_lap,
+    track_temp_mean: state.track_temp_mean, humidity_mean: state.humidity_mean,
+    rainfall_any: state.rainfall_any, wind_speed_mean: state.wind_speed_mean,
+    laptime_trend: state.laptime_trend, deg_trend: state.deg_trend,
+    neutralised_prev: state.neutralised_prev, Compound_enc: state.Compound_enc,
+    car_tier_enc: state.car_tier_enc,
+    circuit_overtaking: circuit.circuit_overtaking,
+    circuit_is_street: circuit.circuit_is_street,
+    circuit_deg_tier: circuit.circuit_deg_tier,
+    circuit_avg_tyre_life: circuit.circuit_avg_tyre_life,
+    circuit_pit_rate: circuit.circuit_pit_rate,
+  };
+  // engineered features (identical to the training pipeline)
+  const exp = EXPECTED_STINT_LIFE[f.Compound_enc] ?? 19;
+  f.tyre_life_ratio = f.TyreLife / exp;
+  f.laps_past_cliff = Math.max(0, f.TyreLife - exp);
+  f.pit_window_distance = Math.abs(rp - 0.5);
+  f.in_pit_window = (rp >= 0.30 && rp <= 0.70) ? 1 : 0;
+  f.deg_per_lap = f.cumulative_degradation_clean / Math.max(1, f.TyreLife);
+  f.position_pressure = 1 / Math.max(1, f.Position);
+  f.pos_loss_x_hard_circuit = Math.abs(Math.min(0, f.position_vs_start)) * (2 - f.circuit_overtaking);
+  f.track_pos_premium = (2 - f.circuit_overtaking) * f.position_pressure;
+  f.is_soft_medium = (f.Compound_enc <= 1) ? 1 : 0;
+  f.tyre_stress = f.TyreLife * (2 - Math.min(2, Math.max(0, f.Compound_enc)));
+  f.pit_opportunity = f.neutralised_lap;
+  f.is_stint_start = (f.TyreLife <= 2) ? 1 : 0;
+  f.circuit_deg_x_tyre = f.circuit_deg_tier * f.TyreLife;
+  return MODEL.features.map(n => f[n] ?? 0);
+}
+
+function modelPredict(vec) {
+  let margin = MODEL.intercept;
+  for (const t of MODEL.trees) {
+    let i = 0;
+    while (t.l[i] !== -1) {
+      const x = Math.fround(vec[t.si[i]]);
+      i = (x < Math.fround(t.sc[i])) ? t.l[i] : t.r[i];
+    }
+    margin += t.sc[i];
+  }
+  return 1 / (1 + Math.exp(-margin));
+}
+
+function predict() {
+  const circuit = CIRCUITS[state.circuit];
+  if (!circuit || !window.MODEL) return;
+  const prob = modelPredict(buildFeatureVector(state, circuit));
+  renderResult({
+    probability: prob, threshold: THRESHOLD,
+    pit: prob >= THRESHOLD,
+    decision: prob >= THRESHOLD ? 'PIT NEXT LAP' : 'STAY OUT',
+  });
+}
+
+function renderResult(d) {
+  const pct = Math.round(d.probability * 100);
+  document.getElementById('prob-val').textContent = pct + '%';
+  document.getElementById('prob-bar').style.width = pct + '%';
+  const dec = document.getElementById('decision');
+  dec.textContent = d.pit ? 'PIT NEXT LAP' : 'STAY OUT';
+  dec.className = d.pit ? 'pit' : 'stay';
+  document.getElementById('thr-note').textContent =
+    `threshold ${(d.threshold*100).toFixed(1)}%`;
+  lastPit = d.pit;
+  carMat.color.setHex(COMPOUND_COLOR[state.Compound_enc] ?? 0xffd02e);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Auto pace/degradation model — couples the model's dominant signals to tyre wear
+// ─────────────────────────────────────────────────────────────────────────────
+const EXPECTED_LIFE = { 0:15, 1:19, 2:26, 3:14, 4:7 };   // laps per compound
+const DEG_TIER_MULT = { 0:0.8, 1:1.0, 2:1.25 };          // circuit wear multiplier
+// Features auto-derived from tyre wear when AUTO mode is on:
+const DERIVED_KEYS = ['LapTime_Delta_Clean','laptime_pct_above_median',
+                      'laptime_trend','cumulative_degradation_clean','deg_trend'];
+let autoLink = true;
+let currentCircuit = null;
+
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+
+function deriveWear() {
+  const exp  = EXPECTED_LIFE[state.Compound_enc] ?? 19;
+  const mult = DEG_TIER_MULT[currentCircuit ? currentCircuit.circuit_deg_tier : 1];
+  const w = (state.TyreLife / exp) * mult;   // ~1.0 = at the tyre cliff
+  const vals = {
+    laptime_trend:                clamp((w - 0.60) * 2.6,  -0.4, 3),
+    laptime_pct_above_median:     clamp((w - 0.40) * 6.5,  -1,  12),
+    LapTime_Delta_Clean:          clamp((w - 0.50) * 2.2,  -1.5, 5),
+    cumulative_degradation_clean: clamp(w * 2.6,            0,   6),
+    deg_trend:                    clamp((w - 0.50) * 1.3,  -0.2, 2),
+  };
+  for (const k in vals) {
+    state[k] = Number(vals[k].toFixed(2));
+    const ctl = document.querySelector(`.ctl[data-slider="${k}"]`);
+    if (ctl) {
+      const i = ctl.querySelector('input');
+      i.value = state[k];
+      ctl.querySelector('.val').textContent = fmt(i.value, ctl.dataset.step);
+    }
+  }
+}
+
+function setAutoLinkUI(on) {
+  DERIVED_KEYS.forEach(k => {
+    const ctl = document.querySelector(`.ctl[data-slider="${k}"]`);
+    if (!ctl) return;
+    ctl.querySelector('input').disabled = on;
+    ctl.style.opacity = on ? 0.5 : 1;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Physical constraints between sliders (keep inputs self-consistent)
+// ─────────────────────────────────────────────────────────────────────────────
+function ctlOf(key) {
+  const c = document.querySelector(`.ctl[data-slider="${key}"]`);
+  return c ? { ctl: c, input: c.querySelector('input'), val: c.querySelector('.val') } : null;
+}
+
+function applyConstraints() {
+  // position_vs_start is bounded by current Position. Grid is P1..P20, so
+  // vs-start = startPos - currentPos lies in [1 - Position, 20 - Position].
+  // → A leader (P1) can't have lost places; a backmarker can't have gained "up".
+  const pvs = ctlOf('position_vs_start');
+  if (pvs) {
+    const lo = 1 - state.Position, hi = 20 - state.Position;
+    pvs.input.min = lo; pvs.input.max = hi;
+    const v = clamp(state.position_vs_start, lo, hi);
+    if (v !== state.position_vs_start) {
+      state.position_vs_start = v; pvs.input.value = v; pvs.val.textContent = v;
+    }
+  }
+  // A tyre can't have more laps on it than the driver has completed.
+  const tl = ctlOf('TyreLife');
+  if (tl) {
+    const tmax = Math.max(1, Math.min(45, Math.round(state.LapNumber)));
+    tl.input.max = tmax;
+    if (state.TyreLife > tmax) {
+      state.TyreLife = tmax; tl.input.value = tmax; tl.val.textContent = tmax;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Controls wiring
+// ─────────────────────────────────────────────────────────────────────────────
+function fmt(v, step) { return (String(step).includes('.')) ? Number(v).toFixed(String(step).split('.')[1].length) : v; }
+
+document.querySelectorAll('.ctl[data-slider]').forEach(ctl => {
+  const key = ctl.dataset.slider;
+  const input = ctl.querySelector('input');
+  const valEl = ctl.querySelector('.val');
+  input.min = ctl.dataset.min; input.max = ctl.dataset.max;
+  input.step = ctl.dataset.step; input.value = ctl.dataset.val;
+  state[key] = Number(ctl.dataset.val);
+  valEl.textContent = fmt(input.value, ctl.dataset.step);
+  input.addEventListener('input', () => {
+    state[key] = Number(input.value);
+    valEl.textContent = fmt(input.value, ctl.dataset.step);
+    if (key === 'Position' || key === 'LapNumber') applyConstraints();
+    if (key === 'LapNumber') updateLapHint();
+    if (autoLink && !DERIVED_KEYS.includes(key)) deriveWear();
+    predict();
+  });
+});
+
+function wireSeg(id, key, onChange) {
+  const seg = document.getElementById(id);
+  seg.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    seg.querySelectorAll('button').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    state[key] = Number(b.dataset.v);
+    if (onChange) onChange(Number(b.dataset.v));
+    if (autoLink) deriveWear();
+    predict();
+  });
+}
+wireSeg('seg-compound', 'Compound_enc');
+wireSeg('seg-tier', 'car_tier_enc');
+wireSeg('seg-rain', 'is_wet_lap', v => { state.rainfall_any = v; });
+wireSeg('seg-sc', 'neutralised_lap', v => { state.neutralised_prev = v; });
+
+// auto/manual pace toggle
+document.getElementById('seg-autolink').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#seg-autolink button').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  autoLink = b.dataset.v === '1';
+  setAutoLinkUI(autoLink);
+  if (autoLink) deriveWear();
+  predict();
+});
+
+// default active buttons
+document.querySelector('#seg-compound button[data-v="1"]').classList.add('active');
+document.querySelector('#seg-tier button[data-v="2"]').classList.add('active');
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Circuit select
+// ─────────────────────────────────────────────────────────────────────────────
+const OT_LABEL = { 0:'Very hard', 1:'Moderate', 2:'Easy' };
+const DEG_LABEL = { 0:'Low', 1:'Medium', 2:'High' };
+
+function selectCircuit(name) {
+  state.circuit = name;
+  const c = CIRCUITS[name];
+  currentCircuit = c;
+  raceLaps = c.race_laps || 58;
+  document.getElementById('gp-name').textContent = name;
+  document.getElementById('gp-meta').textContent =
+    `${c.circuit_is_street ? 'Street circuit' : 'Permanent circuit'} · ${raceLaps} laps · avg tyre life ${c.circuit_avg_tyre_life}`;
+  document.getElementById('cs-ot').textContent = OT_LABEL[c.circuit_overtaking];
+  document.getElementById('cs-deg').textContent = DEG_LABEL[c.circuit_deg_tier];
+  document.getElementById('cs-tyre').textContent = c.circuit_avg_tyre_life;
+  document.getElementById('cs-pit').textContent = (c.circuit_pit_rate*100).toFixed(2) + '%';
+
+  // Adapt the lap slider to this circuit's real race distance
+  const lapCtl = document.querySelector('.ctl[data-slider="LapNumber"]');
+  const lapInput = lapCtl.querySelector('input');
+  lapInput.max = raceLaps;
+  if (state.LapNumber > raceLaps) {
+    state.LapNumber = raceLaps;
+    lapInput.value = raceLaps;
+    lapCtl.querySelector('.val').textContent = raceLaps;
+  }
+  updateLapHint();
+  applyConstraints();
+
+  buildTrack(name);
+  if (autoLink) deriveWear();
+  predict();
+}
+
+function updateLapHint() {
+  const prog = Math.min(100, Math.round(100 * state.LapNumber / raceLaps));
+  document.getElementById('lap-hint').textContent =
+    `Lap ${state.LapNumber} of ${raceLaps} · race progress ${prog}%`;
+}
+
+function init() {
+  const d = window.APPDATA;
+  GEO = window.GEO;
+  CIRCUITS = d.circuits; THRESHOLD = d.threshold;
+  const sel = document.getElementById('circuit');
+  Object.keys(CIRCUITS).sort().forEach(name => {
+    const o = document.createElement('option'); o.value = name; o.textContent = name; sel.appendChild(o);
+  });
+  sel.addEventListener('change', () => selectCircuit(sel.value));
+  setAutoLinkUI(autoLink);
+  sel.value = 'Monaco Grand Prix' in CIRCUITS ? 'Monaco Grand Prix' : sel.options[0].value;
+  selectCircuit(sel.value);
+}
+init();
+</script>
+</body>
+</html>
